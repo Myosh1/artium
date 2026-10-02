@@ -2,7 +2,7 @@ import { layoutRect, layoutPixels } from '../../platform/interfaceScale';
 import React, { useRef, useEffect, useCallback } from 'react';
 import { createPortal } from 'react-dom';
 import { EmojiPicker } from './EmojiPicker';
-import { GifPicker } from './GifPicker';
+import { GifPicker, type GifSelection } from './GifPicker';
 import { useUIStore } from '../../stores/uiStore';
 import { useDragToClose } from '../../hooks/useDragToClose';
 
@@ -12,7 +12,7 @@ interface InputPopoverProps {
   activeTab: InputPopoverTab;
   onClose: () => void;
   onEmojiSelect: (emoji: { native: string }) => void;
-  onGifSelect: (url: string) => void;
+  onGifSelect: (gif: GifSelection) => void;
   anchorRef: React.RefObject<HTMLElement | null>;
   gifEnabled: boolean;
   onTabChange: (tab: InputPopoverTab) => void;

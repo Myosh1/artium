@@ -18,6 +18,7 @@ import { useUIStore } from '../../stores/uiStore';
 import { AttachmentRenderer, attUrlOf } from './AttachmentRenderer';
 import { AttachmentProgress } from './AttachmentProgress';
 import { EmbedRenderer } from './EmbedRenderer';
+import { GifFavoriteButton } from './GifFavoriteButton';
 import { FederationGlobeIcon } from '../ui/Username';
 import { Tooltip } from '../ui/Tooltip';
 import { EmojiPicker } from './EmojiPicker';
@@ -574,13 +575,14 @@ export function Message({ message, isCompact, isFirstInGroup, previousMessageId 
         ) : (
           <div className="flex flex-col gap-1">
             {isGifOnly ? (
-              <div className="mt-1 max-w-[400px]">
+              <div className="group/gif relative mt-1 w-fit max-w-[400px]">
                 <img
                   src={message.content!.trim()}
                   alt={t('chat:message.gifAlt')}
                   className="max-w-full max-h-[300px] rounded-lg"
                   loading="lazy"
                 />
+                <GifFavoriteButton source={{ kind: 'url', url: message.content!.trim() }} />
               </div>
             ) : imageEmbedSourceUrl ? (
               <>

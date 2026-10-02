@@ -125,7 +125,12 @@
     "searchPlaceholder": "搜索 GIF",
     "noResults": "未找到 GIF",
     "noTrending": "暂无热门 GIF",
-    "attribution": "由 Klipy 提供支持"
+    "attribution": "由 Klipy 提供支持",
+    "favorites": "收藏",
+    "favoritesEmpty": "还没有收藏的 GIF",
+    "addFavorite": "添加到收藏",
+    "removeFavorite": "从收藏中移除",
+    "favoriteFailed": "无法更新收藏"
   },
   "preview": {
     "save": "保存图片",

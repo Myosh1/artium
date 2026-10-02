@@ -134,7 +134,12 @@
     "searchPlaceholder": "Поиск GIF",
     "noResults": "GIF не найдены",
     "noTrending": "Нет популярных GIF",
-    "attribution": "При поддержке Klipy"
+    "attribution": "При поддержке Klipy",
+    "favorites": "Избранные",
+    "favoritesEmpty": "Пока нет избранных GIF",
+    "addFavorite": "Добавить в избранное",
+    "removeFavorite": "Убрать из избранного",
+    "favoriteFailed": "Не удалось обновить избранное"
   },
   "preview": {
     "save": "Сохранить изображение",

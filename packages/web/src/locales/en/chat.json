@@ -128,7 +128,12 @@
     "searchPlaceholder": "Search GIFs",
     "noResults": "No GIFs found",
     "noTrending": "No trending GIFs",
-    "attribution": "Powered by Klipy"
+    "attribution": "Powered by Klipy",
+    "favorites": "Favorites",
+    "favoritesEmpty": "No favorite GIFs yet",
+    "addFavorite": "Add to favorites",
+    "removeFavorite": "Remove from favorites",
+    "favoriteFailed": "Could not update favorites"
   },
   "preview": {
     "save": "Save image",

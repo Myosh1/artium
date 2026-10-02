@@ -7,6 +7,7 @@ import { wsSend } from '../../hooks/useWebSocket';
 import { MentionPopover } from './MentionPopover';
 import { TypingIndicator } from './TypingIndicator';
 import { InputPopover, type InputPopoverTab } from './InputPopover';
+import type { GifSelection } from './GifPicker';
 import { AttachmentProgress } from './AttachmentProgress';
 import { hasPermissionBit, PermissionBits } from '../../utils/permissions';
 import { MAX_MESSAGE_LENGTH } from '@backspace/shared';
@@ -50,6 +51,36 @@ const DEFAULT_TUS_TTL_MS = 24 * 60 * 60 * 1000;
 
 function makeFileHandleKey(): string {
   return `up-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
+}
+
+/**
+ * Resolve with the server attachment id once an upload transfer completes.
+ * Rejects if the transfer fails, is aborted, or disappears. Used to send a
+ * favourited file GIF directly, outside the composer's staged-transfer flow.
+ */
+function waitForUploadCompletion(transferId: string): Promise<string> {
+  return new Promise((resolve, reject) => {
+    let unsubscribe = () => {};
+    const evaluate = () => {
+      const transfer = useTransferStore.getState().get(transferId);
+      if (!transfer) {
+        unsubscribe();
+        reject(new Error('Upload transfer disappeared'));
+        return;
+      }
+      if (transfer.state === 'completed' && transfer.attachmentId) {
+        unsubscribe();
+        resolve(transfer.attachmentId);
+        return;
+      }
+      if (transfer.state === 'failed' || transfer.state === 'aborted') {
+        unsubscribe();
+        reject(new Error(transfer.error?.message ?? 'Upload failed'));
+      }
+    };
+    unsubscribe = useTransferStore.subscribe(evaluate);
+    evaluate();
+  });
 }
 
 export function MessageInput({ channelId, channelName, placeholder }: MessageInputProps) {
@@ -590,13 +621,26 @@ export function MessageInput({ channelId, channelName, placeholder }: MessageInp
   );
 
   const handleGifSelect = useCallback(
-    (url: string) => {
-      // GIF picks bypass the staged-transfer pipeline — they're remote URLs,
-      // not local files, and ship as plain content.
+    async (gif: GifSelection) => {
       setActivePopover(null);
-      void sendMessage(channelId, url);
+      // Remote GIFs ship as plain content. A favourite saved as a file is
+      // re-uploaded so the send never depends on the original attachment.
+      if (gif.kind === 'url') {
+        void sendMessage(channelId, gif.url);
+        return;
+      }
+      try {
+        const file = new File([gif.blob], 'favorite.gif', { type: gif.mimeType || 'image/gif' });
+        const transferId = await startUpload(file, { channelId, tray: false });
+        const attachmentId = await waitForUploadCompletion(transferId);
+        await sendMessage(channelId, '', [attachmentId]);
+        useTransferStore.getState().remove(transferId);
+      } catch (err) {
+        const message = err instanceof Error ? err.message : t('chat:composer.sendFailed');
+        addToast(message, 'warning');
+      }
     },
-    [channelId, sendMessage],
+    [channelId, sendMessage, startUpload, addToast, t],
   );
 
   const togglePopover = useCallback((tab: InputPopoverTab) => {

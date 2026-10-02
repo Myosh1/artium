@@ -4,6 +4,7 @@ import type { Attachment } from '@backspace/shared';
 import { useUIStore } from '../../stores/uiStore';
 import { useTransferStore } from '../../stores/transferStore';
 import { Tooltip } from '../ui/Tooltip';
+import { GifFavoriteButton } from './GifFavoriteButton';
 import { useFormatters } from '../../i18n/formatters';
 
 interface AttachmentRendererProps {
@@ -235,10 +236,11 @@ export function AttachmentRenderer({ attachment }: AttachmentRendererProps) {
 
   if (mimetype.startsWith('image/')) {
     const { width, height } = attachment;
+    const isGif = mimetype === 'image/gif';
     return (
       <div className="mt-1 max-w-fit">
         <div
-          className="relative rounded-lg overflow-hidden border border-white/[0.06]"
+          className={`relative rounded-lg overflow-hidden border border-white/[0.06]${isGif ? ' group/gif' : ''}`}
           style={width && height ? { aspectRatio: `${width}/${height}`, maxWidth: Math.min(width, 400), maxHeight: 300 } : undefined}
         >
           <img
@@ -248,6 +250,11 @@ export function AttachmentRenderer({ attachment }: AttachmentRendererProps) {
             onClick={() => openImagePreview(attUrl)}
             loading="lazy"
           />
+          {isGif && (
+            <GifFavoriteButton
+              source={{ kind: 'file', attachmentUrl: attUrl, mimeType: mimetype, width, height }}
+            />
+          )}
         </div>
         {federationInlineBadge && <div className="mt-1">{federationInlineBadge}</div>}
       </div>

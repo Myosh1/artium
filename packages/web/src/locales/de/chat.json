@@ -128,7 +128,12 @@
     "searchPlaceholder": "GIFs suchen",
     "noResults": "Keine GIFs gefunden",
     "noTrending": "Keine beliebten GIFs",
-    "attribution": "Bereitgestellt von Klipy"
+    "attribution": "Bereitgestellt von Klipy",
+    "favorites": "Favoriten",
+    "favoritesEmpty": "Noch keine Favoriten-GIFs",
+    "addFavorite": "Zu Favoriten hinzufügen",
+    "removeFavorite": "Aus Favoriten entfernen",
+    "favoriteFailed": "Favoriten konnten nicht aktualisiert werden"
   },
   "preview": {
     "save": "Bild speichern",
