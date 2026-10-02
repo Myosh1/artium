@@ -161,6 +161,7 @@ export function Message({ message, isCompact, isFirstInGroup, previousMessageId 
   const deleteMessage = useChatStore((s) => s.deleteMessage);
   const members = useSpaceStore((s) => s.members);
   const openUserProfile = useUIStore((s) => s.openUserProfile);
+  const openImagePreview = useUIStore((s) => s.openImagePreview);
   const jumpToMessage = useMessageJump();
 
   const pending = isPendingMessage(message) ? message.__pending : null;
@@ -579,7 +580,8 @@ export function Message({ message, isCompact, isFirstInGroup, previousMessageId 
                 <img
                   src={message.content!.trim()}
                   alt={t('chat:message.gifAlt')}
-                  className="max-w-full max-h-[300px] rounded-lg"
+                  className="max-w-full max-h-[300px] rounded-lg cursor-pointer"
+                  onClick={() => openImagePreview(message.content!.trim())}
                   loading="lazy"
                 />
                 <GifFavoriteButton source={{ kind: 'url', url: message.content!.trim() }} />
