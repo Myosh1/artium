@@ -15,9 +15,8 @@ import {
 } from './audioIsolationPolicy';
 
 const identity: OwnIdentity = {
-  pids: new Set([100, 101]),
-  binaryNames: new Set(['Backspace', 'electron']),
-  applicationNames: new Set(['Backspace']),
+  binaryNames: new Set(['Artium', 'electron']),
+  applicationNames: new Set(['Artium']),
 };
 
 function sinkInput(overrides: Partial<PulseSinkInput>): PulseSinkInput {
@@ -84,8 +83,8 @@ describe('parseSinkInputs', () => {
         sink: 169,
         owner_module: null,
         properties: {
-          'application.name': 'Backspace',
-          'application.process.binary': 'Backspace',
+          'application.name': 'Artium',
+          'application.process.binary': 'Artium',
           'application.process.id': '2898',
         },
       },
@@ -95,8 +94,8 @@ describe('parseSinkInputs', () => {
         index: 134,
         sink: 169,
         ownerModule: null,
-        applicationName: 'Backspace',
-        processBinary: 'Backspace',
+        applicationName: 'Artium',
+        processBinary: 'Artium',
         processId: 2898,
       },
       {
@@ -112,15 +111,14 @@ describe('parseSinkInputs', () => {
 });
 
 describe('isOwnApplication', () => {
-  it('matches by process id, binary name, or application name', () => {
-    expect(isOwnApplication(sinkInput({ processId: 101 }), identity)).toBe(true);
+  it('matches by binary name or application name', () => {
+    expect(isOwnApplication(sinkInput({ processBinary: 'Artium' }), identity)).toBe(true);
     expect(isOwnApplication(sinkInput({ processBinary: 'electron' }), identity)).toBe(true);
-    expect(isOwnApplication(sinkInput({ applicationName: 'Backspace' }), identity)).toBe(true);
+    expect(isOwnApplication(sinkInput({ applicationName: 'Artium' }), identity)).toBe(true);
   });
 
   it('rejects unrelated applications', () => {
-    expect(isOwnApplication(sinkInput({ processId: 999, processBinary: 'firefox', applicationName: 'Firefox' }), identity))
-      .toBe(false);
+    expect(isOwnApplication(sinkInput({ processBinary: 'firefox', applicationName: 'Firefox' }), identity)).toBe(false);
     expect(isOwnApplication(sinkInput({}), identity)).toBe(false);
   });
 });
@@ -131,7 +129,7 @@ describe('resolveAppOutputSink', () => {
   it('reads the sink the app is currently playing to', () => {
     const inputs = [
       sinkInput({ index: 1, sink: 11, ownerModule: 7 }),
-      sinkInput({ index: 2, sink: 10, processBinary: 'Backspace' }),
+      sinkInput({ index: 2, sink: 10, processBinary: 'Artium' }),
     ];
     expect(resolveAppOutputSink(inputs, sinks, identity, 'speakers')).toBe('headphones');
   });
@@ -145,10 +143,10 @@ describe('resolveAppOutputSink', () => {
 describe('planSinkMoves', () => {
   const opts = { nullSinkIndex: 20, appOutputSink: 'speakers', identity };
 
-  it('moves Backspace off the captured sink and other apps onto it', () => {
+  it('moves Artium off the captured sink and other apps onto it', () => {
     const inputs = [
-      sinkInput({ index: 1, sink: 20, processBinary: 'Backspace' }), // ours, captured → out
-      sinkInput({ index: 2, sink: 11, processBinary: 'Backspace' }), // ours, already out
+      sinkInput({ index: 1, sink: 20, processBinary: 'Artium' }), // ours, captured → out
+      sinkInput({ index: 2, sink: 11, processBinary: 'Artium' }), // ours, already out
       sinkInput({ index: 3, sink: 11, processBinary: 'firefox' }),   // other, not captured → in
       sinkInput({ index: 4, sink: 20, processBinary: 'firefox' }),   // other, already captured
       sinkInput({ index: 5, sink: 11, ownerModule: 536870917 }),     // module stream → untouched

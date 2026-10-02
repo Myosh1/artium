@@ -15,9 +15,9 @@
  */
 
 /** Name of the private null sink the captured monitor comes from. */
-export const AUDIO_ISOLATION_SINK_NAME = 'backspace_capture';
-/** `device.description` (no spaces: the module argument is not shell-quoted). */
-export const AUDIO_ISOLATION_SINK_DESCRIPTION = 'Backspace_Share_Isolation';
+export const AUDIO_ISOLATION_SINK_NAME = 'artium_capture';
+/** `device.description`, shown by the desktop's audio OSD while sharing. */
+export const AUDIO_ISOLATION_SINK_DESCRIPTION = 'Artium';
 
 /**
  * How many consecutive reconciliation ticks may see no capturing stream before
@@ -182,26 +182,24 @@ export function parseSinkInputs(json: string): PulseSinkInput[] {
 }
 
 // ---------------------------------------------------------------------------
-// Which streams belong to Backspace
+// Which streams belong to this app
 // ---------------------------------------------------------------------------
 
+/**
+ * How to recognise the app's own playback. Chromium plays audio from its
+ * audio-service process, which runs the same executable as the app and carries
+ * the app's name, so the process binary and the announced application name are
+ * enough — no process-tree walk needed.
+ */
 export interface OwnIdentity {
-  /** Process ids in this app's process tree (main + renderers + audio service). */
-  pids: ReadonlySet<number>;
   /** Executable basenames of this app's processes. */
   binaryNames: ReadonlySet<string>;
   /** `application.name` values this app announces. */
   applicationNames: ReadonlySet<string>;
 }
 
-/**
- * Whether a playback stream was produced by Backspace. Any one signal is
- * enough: Chromium's audio service runs as a child process of the app, so its
- * `application.process.id` is in the tree; its process runs the app binary; and
- * builds that announce a name use the product name.
- */
+/** Whether a playback stream was produced by this app. One matching signal is enough. */
 export function isOwnApplication(input: PulseSinkInput, identity: OwnIdentity): boolean {
-  if (input.processId !== null && identity.pids.has(input.processId)) return true;
   if (input.processBinary !== null && identity.binaryNames.has(input.processBinary)) return true;
   if (input.applicationName !== null && identity.applicationNames.has(input.applicationName)) return true;
   return false;

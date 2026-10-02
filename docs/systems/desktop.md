@@ -848,7 +848,7 @@ No sources (0 results) typically means Screen Recording permission not granted o
 Chromium's system-audio capture records the default sink's monitor and, on Linux, ignores `restrictOwnAudio`, so Backspace's own playback (the channel voices) was recorded and republished as `ScreenShareAudio` — everyone heard themselves. `packages/desktop/src/audioIsolation.ts` prevents that for as long as a capture is live:
 
 1. Before Chromium opens the loopback, each of the three handler branches above awaits `ensureAudioIsolation()` when System Audio is on.
-2. It loads a private null sink (`backspace_capture`), loops its monitor to the current physical output (so other applications are still heard), and makes it the default, so Chromium records a monitor Backspace is not on.
+2. It loads a private null sink (`artium_capture`), loops its monitor to the current physical output (so other applications are still heard), and makes it the default, so Chromium records a monitor the app is not on.
 3. A reconciliation tick (every 2 s) keeps every other application on the captured sink — so it is heard through the loopback *and* recorded, including audio already playing before the share — and keeps Backspace's streams off it (they stay on the sink the app already plays to, preserving the user's chosen output).
 4. The live capture is detected through `pactl list source-outputs`: Chromium's loopback is an application record stream on the monitor, while the isolation's own `module-loopback` carries an `owner_module` and is excluded. When no capture is seen for `RELEASE_AFTER_MISSING_TICKS`, the default sink is restored and the modules are unloaded.
 

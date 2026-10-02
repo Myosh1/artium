@@ -2,16 +2,16 @@
  * Linux screen-share audio isolation — the side-effecting half.
  *
  * Chromium's system-audio capture records the default sink's monitor, and on
- * Linux it ignores `restrictOwnAudio`. Without help, Backspace's own playback
+ * Linux it ignores `restrictOwnAudio`. Without help, the app's own playback
  * (the channel voices) is recorded and republished as `ScreenShareAudio`, so
  * everyone hears themselves. This module makes the app inaudible to that
  * capture for as long as a capture is live:
  *
- *   1. load a private null sink       (backspace_capture)
+ *   1. load a private null sink       (artium_capture)
  *   2. loop its monitor to the current physical output, so other applications
  *      are still heard
  *   3. make the null sink the default, so Chromium records its monitor
- *   4. keep every other application on the null sink and Backspace off it
+ *   4. keep every other application on the null sink and the app off it
  *   5. tear all of that down once no application is recording the monitor
  *
  * The live capture is detected through `pactl list source-outputs`: Chromium's
@@ -52,6 +52,7 @@ let originalSink: string | null = null;
 let appOutputSink: string | null = null;
 let nullSinkIndex: number | null = null;
 let monitorSourceIndex: number | null = null;
+let ownIdentity: OwnIdentity | null = null;
 let loadedModules: number[] = [];
 let reconcileTimer: ReturnType<typeof setInterval> | null = null;
 let reconcileInFlight = false;
@@ -129,54 +130,20 @@ function parseShortModules(text: string): Array<{ id: number; args: string }> {
 // Own-process identity
 // ---------------------------------------------------------------------------
 
-/** Every process in this app's tree, so Chromium's audio service is included. */
-function collectProcessTreePids(rootPid: number): Set<number> {
-  const pids = new Set<number>([rootPid]);
-  const parentOf = new Map<number, number>();
-  let entries: string[];
-  try {
-    entries = fs.readdirSync('/proc');
-  } catch {
-    return pids;
-  }
-  for (const entry of entries) {
-    const pid = Number(entry);
-    if (!Number.isInteger(pid)) continue;
-    try {
-      const stat = fs.readFileSync(`/proc/${pid}/stat`, 'utf8');
-      // "pid (comm) state ppid ..." — comm can contain spaces and parens.
-      const close = stat.lastIndexOf(')');
-      if (close < 0) continue;
-      const fields = stat.slice(close + 1).trim().split(/\s+/);
-      const ppid = Number(fields[1]);
-      if (Number.isInteger(ppid)) parentOf.set(pid, ppid);
-    } catch {
-      // Process vanished or is not readable — skip.
-    }
-  }
-  let changed = true;
-  while (changed) {
-    changed = false;
-    for (const [pid, ppid] of parentOf) {
-      if (!pids.has(pid) && pids.has(ppid)) {
-        pids.add(pid);
-        changed = true;
-      }
-    }
-  }
-  return pids;
-}
-
+/**
+ * The app's own playback streams. Chromium plays audio from its audio-service
+ * process, which runs the same executable as the app and announces the app
+ * name, so the executable basename and `app.getName()` are enough to tell the
+ * app's audio apart from everything else.
+ */
 function collectOwnIdentity(): OwnIdentity {
   const binaryNames = new Set<string>();
-  const execName = path.basename(process.execPath);
-  binaryNames.add(execName);
-  if (execName.endsWith('.exe')) binaryNames.add(execName.slice(0, -'.exe'.length));
-  const applicationNames = new Set<string>([app.getName(), 'Backspace']);
+  const executable = path.basename(process.execPath);
+  binaryNames.add(executable);
+  if (executable.endsWith('.exe')) binaryNames.add(executable.slice(0, -'.exe'.length));
   return {
-    pids: collectProcessTreePids(process.pid),
     binaryNames,
-    applicationNames,
+    applicationNames: new Set([app.getName()]),
   };
 }
 
@@ -255,11 +222,11 @@ async function loadNullSink(): Promise<boolean> {
 }
 
 /**
- * Start isolating Backspace from the system-audio capture. Called from the
+ * Start isolating the app from the system-audio capture. Called from the
  * display-media handler before Chromium opens the loopback, so the captured
- * monitor is already Backspace-free. Idempotent and serialized; returns true
- * when isolation is in force. A no-op away from Linux or a Pulse-compatible
- * server.
+ * monitor already excludes the app's audio. Idempotent and serialized; returns
+ * true when isolation is in force. A no-op away from Linux or a
+ * Pulse-compatible server.
  */
 export async function ensureAudioIsolation(): Promise<boolean> {
   if (process.platform !== 'linux') return false;
@@ -290,6 +257,7 @@ async function setup(depth = 0): Promise<boolean> {
   const physicalSink = info.defaultSinkName;
 
   const identity = collectOwnIdentity();
+  ownIdentity = identity;
   const sinksBefore = parseEntityList((await runPactlSafe(['-f', 'json', 'list', 'sinks'])) ?? '');
   const inputsBefore = parseSinkInputs((await runPactlSafe(['-f', 'json', 'list', 'sink-inputs'])) ?? '');
   const resolvedAppSink = resolveAppOutputSink(inputsBefore, sinksBefore, identity, physicalSink);
@@ -329,6 +297,7 @@ async function setup(depth = 0): Promise<boolean> {
     appOutputSink = null;
     nullSinkIndex = null;
     monitorSourceIndex = null;
+    ownIdentity = null;
     return false;
   }
 
@@ -386,6 +355,7 @@ export async function releaseAudioIsolation(): Promise<void> {
   appOutputSink = null;
   nullSinkIndex = null;
   monitorSourceIndex = null;
+  ownIdentity = null;
   missingTicks = 0;
   console.log(`${LOG} released system-audio isolation`);
 }
@@ -475,21 +445,15 @@ async function reconcile(): Promise<void> {
       return;
     }
 
-    if (nullSinkIndex === null || !appOutputSink) return;
-    const sinks = parseEntityList((await runPactlSafe(['-f', 'json', 'list', 'sinks'])) ?? '');
-    const capturedSink = sinks.find((sink) => sink.name === AUDIO_ISOLATION_SINK_NAME);
-    if (!capturedSink) {
-      // The sink was removed out from under us; drop the isolation cleanly.
-      await releaseAudioIsolation();
-      return;
-    }
-    nullSinkIndex = capturedSink.index;
-
+    // Keep other applications on the captured sink and this app off it. The
+    // sink and identity are cached for the session, so each tick costs two
+    // `pactl` calls and no process-tree scan.
+    if (nullSinkIndex === null || !appOutputSink || !ownIdentity) return;
     const inputs = parseSinkInputs((await runPactlSafe(['-f', 'json', 'list', 'sink-inputs'])) ?? '');
     const moves = planSinkMoves(inputs, {
       nullSinkIndex,
       appOutputSink,
-      identity: collectOwnIdentity(),
+      identity: ownIdentity,
     });
     for (const move of moves) {
       await runPactlSafe(['move-sink-input', String(move.index), move.targetSink]);
