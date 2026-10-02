@@ -252,7 +252,7 @@ export function AttachmentRenderer({ attachment }: AttachmentRendererProps) {
           />
           {isGif && (
             <GifFavoriteButton
-              source={{ kind: 'file', attachmentUrl: attUrl, mimeType: mimetype, width, height }}
+              source={{ kind: 'file', attachmentUrl: attUrl, mimeType: mimetype, width: width ?? undefined, height: height ?? undefined }}
             />
           )}
         </div>
