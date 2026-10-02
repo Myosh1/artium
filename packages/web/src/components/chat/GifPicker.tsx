@@ -233,15 +233,19 @@ export function GifPicker({ onGifSelect, mobile = false }: GifPickerProps) {
           </div>
         ) : (
           <div className="columns-2 gap-1.5 p-1">
-            <button
-              onClick={() => setView('favorites')}
-              className="w-full mb-1.5 rounded-lg overflow-hidden hover:ring-2 hover:ring-accent-primary transition-all break-inside-avoid"
-            >
-              <div className="flex aspect-square w-full flex-col items-center justify-center gap-1.5 bg-surface-elevated text-txt-secondary">
-                <StarIcon className="h-6 w-6 text-accent-amber" />
-                <span className="text-xs font-medium">{t('chat:gif.favorites')}</span>
-              </div>
-            </button>
+            {/* The Favorites tile is the entry point, so it appears only once
+                there is something in it — the star in chat is how you add one. */}
+            {favorites.length > 0 && (
+              <button
+                onClick={() => setView('favorites')}
+                className="w-full mb-1.5 rounded-lg overflow-hidden hover:ring-2 hover:ring-accent-primary transition-all break-inside-avoid"
+              >
+                <div className="flex aspect-square w-full flex-col items-center justify-center gap-1.5 bg-surface-elevated text-txt-secondary">
+                  <StarIcon className="h-6 w-6 text-accent-amber" />
+                  <span className="text-xs font-medium">{t('chat:gif.favorites')}</span>
+                </div>
+              </button>
+            )}
             {results.map((gif) => (
               <button
                 key={gif.id}
