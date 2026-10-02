@@ -57,27 +57,44 @@ import {
   type PendingScreenSelection,
   type ScreenSharePickerMode,
 } from './screenSharePolicy';
+import {
+  ensureAudioIsolation,
+  releaseAudioIsolationSync,
+  sweepStaleAudioIsolation,
+} from './audioIsolation';
 import { getDesktopLanguage, isDesktopLanguage, saveStoredLanguage, translateDesktop } from './l10n';
 
 // Override Electron's package.json-derived app name so userData lives at
-// "<appData>/Backspace" instead of leaking the monorepo's "@backspace/desktop"
+// "<appData>/Artium" instead of leaking the monorepo's "@backspace/desktop"
 // package name. Must run before any app.getPath('userData') consumer.
-app.setName('Backspace');
+app.setName('Artium');
 
-// One-time migration from the historical scoped path. After the move the old
-// folder is gone, so subsequent launches hit the old-missing no-op branch.
+// One-time adoption of an existing profile. The upstream app kept its data in
+// "<appData>/Backspace" (and, before that, in the scoped "@backspace/desktop"
+// path); this fork is renamed, so it moves whichever exists to "Artium". Once
+// Artium is populated both calls no-op on every later launch.
 {
   const appDataDir = app.getPath('appData');
-  const oldParent = path.join(appDataDir, '@backspace');
-  const result = migrateUserData({
-    oldDir: path.join(oldParent, 'desktop'),
-    newDir: path.join(appDataDir, 'Backspace'),
-    oldParent,
-  });
-  if (result.kind === 'migrated') {
-    console.log(`[userData] migrated ${result.from} → ${result.to}`);
-  } else if (result.kind === 'failed') {
-    console.error('[userData] migration failed:', result.error);
+  const legacyParent = path.join(appDataDir, '@backspace');
+  const migrations = [
+    {
+      oldDir: path.join(legacyParent, 'desktop'),
+      newDir: path.join(appDataDir, 'Artium'),
+      oldParent: legacyParent,
+    },
+    {
+      oldDir: path.join(appDataDir, 'Backspace'),
+      newDir: path.join(appDataDir, 'Artium'),
+      oldParent: appDataDir,
+    },
+  ];
+  for (const migration of migrations) {
+    const result = migrateUserData(migration);
+    if (result.kind === 'migrated') {
+      console.log(`[userData] migrated ${result.from} → ${result.to}`);
+    } else if (result.kind === 'failed') {
+      console.error('[userData] migration failed:', result.error);
+    }
   }
 }
 
@@ -92,7 +109,7 @@ const knownInstanceOrigins = new Set<string>();
 // ─── AGPL-3.0 § 13 source offer ─────────────────────────────────────────────
 // Upstream fallback for the "Source code" menu items and the About panel.
 // Used when the connected instance can't be reached or advertises no source URL.
-const UPSTREAM_SOURCE_URL = 'https://github.com/TheZwiss/backspace';
+const UPSTREAM_SOURCE_URL = 'https://github.com/Myosh1/artium';
 
 /**
  * Resolve the Corresponding Source URL for the instance the desktop app is
@@ -1248,6 +1265,10 @@ if (!gotTheLock) {
     await session.defaultSession.clearStorageData({ storages: ['serviceworkers'] });
     await session.defaultSession.clearCache();
 
+    // Linux: drop any screen-share audio isolation a previous run left behind
+    // (crash or forced quit) before the user can start a new share.
+    void sweepStaleAudioIsolation();
+
     // Intercept getDisplayMedia(). Two ways to answer it:
     //   1. Preselected (current web client): ScreenShareSetup listed the
     //      sources via get-screen-sources, the user picked a tile, and the
@@ -1270,6 +1291,9 @@ if (!gotTheLock) {
             return;
           }
           console.log('[Main:ScreenShare] Using preselected source:', pending.sourceId, 'audio:', pending.shareAudio);
+          // Linux: make the recorded monitor Backspace-free before Chromium
+          // opens the loopback. No-op elsewhere and on a non-Pulse stack.
+          if (pending.shareAudio) await ensureAudioIsolation();
           callback({ video: selected, ...(pending.shareAudio ? { audio: 'loopback' } : {}) });
           return;
         }
@@ -1293,6 +1317,7 @@ if (!gotTheLock) {
           // captured against the setting it thinks is in force.
           const shareAudio = lastSystemPickerShareAudio ?? false;
           console.log('[Main:ScreenShare] System picker returned one source:', sources[0]!.id, 'audio:', shareAudio);
+          if (shareAudio) await ensureAudioIsolation();
           callback({ video: sources[0]!, ...(shareAudio ? { audio: 'loopback' } : {}) });
           return;
         }
@@ -1329,6 +1354,7 @@ if (!gotTheLock) {
         //     `PulseaudioLoopbackForScreenShare` feature flag we enable above.
         //     Fails on PipeWire-only systems without pulse compat — the
         //     renderer catches that and toasts the user.
+        if (shareAudio) await ensureAudioIsolation();
         callback({ video: selected, ...(shareAudio ? { audio: 'loopback' } : {}) });
       } catch (err) {
         console.error('[Main:ScreenShare] Handler error:', err);
@@ -1475,5 +1501,6 @@ if (!gotTheLock) {
     isQuitting = true;
     stopActivityDetection();
     keybindManager.stop();
+    releaseAudioIsolationSync();
   });
 }

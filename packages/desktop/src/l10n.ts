@@ -21,7 +21,7 @@ export type DesktopLanguage = 'en' | 'ru' | 'de' | 'zh';
 const DESKTOP_LANGUAGES: readonly DesktopLanguage[] = ['en', 'ru', 'de', 'zh'];
 
 const en = {
-  'tray.show': 'Show Backspace',
+  'tray.show': 'Show Artium',
   'tray.hide': 'Hide',
   'tray.changeInstance': 'Change Instance',
   'tray.sourceCode': 'Source code (AGPL)',
@@ -35,7 +35,7 @@ const en = {
   'update.ready': 'Update Ready',
   'update.available': 'Update Available',
   'update.restartToInstall': 'Restart to Install Update',
-  'update.downloadVersion': 'Download Backspace {version}…',
+  'update.downloadVersion': 'Download Artium {version}…',
   'update.download': 'Download the Update…',
 } as const;
 
@@ -44,7 +44,7 @@ export type DesktopStringKey = keyof typeof en;
 type Catalog = Record<DesktopStringKey, string>;
 
 const ru: Catalog = {
-  'tray.show': 'Показать Backspace',
+  'tray.show': 'Показать Artium',
   'tray.hide': 'Скрыть',
   'tray.changeInstance': 'Сменить сервер',
   'tray.sourceCode': 'Исходный код (AGPL)',
@@ -58,12 +58,12 @@ const ru: Catalog = {
   'update.ready': 'Обновление готово',
   'update.available': 'Доступно обновление',
   'update.restartToInstall': 'Перезапустить для установки',
-  'update.downloadVersion': 'Скачать Backspace {version}…',
+  'update.downloadVersion': 'Скачать Artium {version}…',
   'update.download': 'Скачать обновление…',
 };
 
 const de: Catalog = {
-  'tray.show': 'Backspace anzeigen',
+  'tray.show': 'Artium anzeigen',
   'tray.hide': 'Ausblenden',
   'tray.changeInstance': 'Instanz wechseln',
   'tray.sourceCode': 'Quellcode (AGPL)',
@@ -77,12 +77,12 @@ const de: Catalog = {
   'update.ready': 'Update bereit',
   'update.available': 'Update verfügbar',
   'update.restartToInstall': 'Neu starten und Update installieren',
-  'update.downloadVersion': 'Backspace {version} herunterladen…',
+  'update.downloadVersion': 'Artium {version} herunterladen…',
   'update.download': 'Update herunterladen…',
 };
 
 const zh: Catalog = {
-  'tray.show': '显示 Backspace',
+  'tray.show': '显示 Artium',
   'tray.hide': '隐藏',
   'tray.changeInstance': '切换实例',
   'tray.sourceCode': '源代码 (AGPL)',
@@ -96,7 +96,7 @@ const zh: Catalog = {
   'update.ready': '更新已就绪',
   'update.available': '有可用更新',
   'update.restartToInstall': '重启以安装更新',
-  'update.downloadVersion': '下载 Backspace {version}…',
+  'update.downloadVersion': '下载 Artium {version}…',
   'update.download': '下载更新…',
 };
 

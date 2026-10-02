@@ -94,20 +94,20 @@ jobs:
           asset() { printf '[%s](%s/%s)' "$1" "$base" "$1"; }
           notes="$(mktemp)"
           {
-            echo "# Backspace $version"
+            echo "# Artium $version"
             echo
             echo "## Downloads"
             echo
             echo "| Platform | Download |"
             echo "|---|---|"
-            echo "| Windows x64 | $(asset "Backspace-$version-win-x64.exe") |"
-            echo "| Windows arm64 | $(asset "Backspace-$version-win-arm64.exe") |"
-            echo "| Linux AppImage x86_64 | $(asset "Backspace-$version-linux-x86_64.AppImage") |"
-            echo "| Linux AppImage arm64 | $(asset "Backspace-$version-linux-arm64.AppImage") |"
-            echo "| Linux deb amd64 | $(asset "Backspace-$version-linux-amd64.deb") |"
-            echo "| Linux deb arm64 | $(asset "Backspace-$version-linux-arm64.deb") |"
-            echo "| macOS Apple Silicon | $(asset "Backspace-$version-mac-arm64.dmg") |"
-            echo "| macOS Intel | $(asset "Backspace-$version-mac-x64.dmg") |"
+            echo "| Windows x64 | $(asset "Artium-$version-win-x64.exe") |"
+            echo "| Windows arm64 | $(asset "Artium-$version-win-arm64.exe") |"
+            echo "| Linux AppImage x86_64 | $(asset "Artium-$version-linux-x86_64.AppImage") |"
+            echo "| Linux AppImage arm64 | $(asset "Artium-$version-linux-arm64.AppImage") |"
+            echo "| Linux deb amd64 | $(asset "Artium-$version-linux-amd64.deb") |"
+            echo "| Linux deb arm64 | $(asset "Artium-$version-linux-arm64.deb") |"
+            echo "| macOS Apple Silicon | $(asset "Artium-$version-mac-arm64.dmg") |"
+            echo "| macOS Intel | $(asset "Artium-$version-mac-x64.dmg") |"
             echo
             echo "The \`.blockmap\` and \`latest*.yml\` files are read by the auto-updater and are not meant to be downloaded by hand."
           } > "$notes"
@@ -115,7 +115,7 @@ jobs:
           echo "No release carries $TAG yet — creating the draft."
           gh release create "$TAG" \
             --draft \
-            --title "Backspace $version" \
+            --title "Artium $version" \
             --notes-file "$notes"
 
   build:
@@ -256,14 +256,14 @@ jobs:
           case "$RUNNER_OS" in
             macOS)
               artifacts=(
-                "dist-electron/mac/Backspace.app"
-                "dist-electron/mac-arm64/Backspace.app"
+                "dist-electron/mac/Artium.app"
+                "dist-electron/mac-arm64/Artium.app"
               )
               ;;
             Windows)
               artifacts=(
-                "dist-electron/win-unpacked/Backspace.exe"
-                "dist-electron/win-arm64-unpacked/Backspace.exe"
+                "dist-electron/win-unpacked/Artium.exe"
+                "dist-electron/win-arm64-unpacked/Artium.exe"
               )
               ;;
             Linux)
@@ -274,9 +274,9 @@ jobs:
               # linux.executableName explicitly. Keep this path in step with
               # packages/desktop/electron-builder.yml; nothing else couples them.
               if [ "$RUNNER_ARCH" = "ARM64" ]; then
-                artifacts=("dist-electron/linux-arm64-unpacked/Backspace")
+                artifacts=("dist-electron/linux-arm64-unpacked/Artium")
               else
-                artifacts=("dist-electron/linux-unpacked/Backspace")
+                artifacts=("dist-electron/linux-unpacked/Artium")
               fi
               ;;
             *)

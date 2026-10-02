@@ -53,7 +53,7 @@ export class GlobalShortcutsPortal {
       if (!process.env.FLATPAK_ID && !existsSync('/.flatpak-info')) {
         try {
           await this.call('org.freedesktop.host.portal.Registry', 'Register', 'sa{sv}',
-            ['io.github.TheZwiss.backspace', {}]);
+            ['io.github.myosh1.artium', {}]);
         } catch (error) {
           if (!(error instanceof DBusError) || ![
             'org.freedesktop.DBus.Error.UnknownMethod', 'org.freedesktop.DBus.Error.UnknownInterface',

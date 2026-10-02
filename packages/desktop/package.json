@@ -3,14 +3,14 @@
   "version": "1.7.0",
   "private": true,
   "license": "AGPL-3.0-only",
-  "description": "Backspace",
+  "description": "Artium",
   "author": {
     "name": "Jannis Braun",
     "email": "backspace@backspace.chat"
   },
-  "homepage": "https://github.com/TheZwiss/backspace",
+  "homepage": "https://github.com/Myosh1/artium",
   "main": "dist/main.js",
-  "desktopName": "io.github.TheZwiss.backspace.desktop",
+  "desktopName": "io.github.myosh1.artium.desktop",
   "scripts": {
     "build:ts": "tsc",
     "dev": "tsc && electron .",

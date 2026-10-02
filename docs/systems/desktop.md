@@ -298,7 +298,7 @@ for why the ad-hoc signature makes it impossible today.
 ```
 autoDownload         = capability === 'auto'
 autoInstallOnAppQuit = capability === 'auto'
-Publish: GitHub (TheZwiss/backspace)
+Publish: GitHub (Myosh1/artium)
 ```
 
 In `manual` mode nothing is downloaded, so no proxy server is created, Squirrel
@@ -842,6 +842,17 @@ There is no persistent grant: the portal asks per share by design, and one scree
 The prompted flow stays because the desktop app loads whatever web client its instance serves: an older instance still calls `getDisplayMedia()` first, and a newer instance on an older desktop build lacks `getScreenSources` and falls back to this path (`preselectScreenSource` / `getScreenSources` are optional in `electron.d.ts` for that reason).
 
 No sources (0 results) typically means Screen Recording permission not granted on macOS.
+
+### Linux system-audio isolation
+
+Chromium's system-audio capture records the default sink's monitor and, on Linux, ignores `restrictOwnAudio`, so Backspace's own playback (the channel voices) was recorded and republished as `ScreenShareAudio` — everyone heard themselves. `packages/desktop/src/audioIsolation.ts` prevents that for as long as a capture is live:
+
+1. Before Chromium opens the loopback, each of the three handler branches above awaits `ensureAudioIsolation()` when System Audio is on.
+2. It loads a private null sink (`backspace_capture`), loops its monitor to the current physical output (so other applications are still heard), and makes it the default, so Chromium records a monitor Backspace is not on.
+3. A reconciliation tick (every 2 s) keeps every other application on the captured sink — so it is heard through the loopback *and* recorded, including audio already playing before the share — and keeps Backspace's streams off it (they stay on the sink the app already plays to, preserving the user's chosen output).
+4. The live capture is detected through `pactl list source-outputs`: Chromium's loopback is an application record stream on the monitor, while the isolation's own `module-loopback` carries an `owner_module` and is excluded. When no capture is seen for `RELEASE_AFTER_MISSING_TICKS`, the default sink is restored and the modules are unloaded.
+
+All parsing and decisions live in `audioIsolationPolicy.ts` (unit-tested without a server). No web-client or preload change is involved: the lifecycle is inferred from the audio graph. Linux only, and a no-op where `pactl` or a PulseAudio-compatible server is absent. `sweepStaleAudioIsolation()` runs on startup to clean up after a crash (the previous physical sink is persisted to `audio-isolation.json` in userData), and `before-quit` releases the isolation synchronously.
 
 For full screen share configuration (resolution, bitrate, codec), see `voice.md`.
 

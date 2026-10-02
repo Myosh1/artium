@@ -1,5 +1,5 @@
-appId: com.backspace.desktop
-productName: Backspace
+appId: io.github.myosh1.artium
+productName: Artium
 # Every release asset names its platform, so the GitHub asset list (which is
 # sorted by name and nothing else) groups by platform and reads on its own:
 # Backspace-1.4.0-win-x64.exe, -mac-arm64.dmg, -linux-x86_64.AppImage. The
@@ -37,17 +37,17 @@ npmRebuild: false
 afterPack: ./scripts/afterPack.js
 publish:
   - provider: github
-    owner: TheZwiss
-    repo: backspace
+    owner: Myosh1
+    repo: artium
 protocols:
-  - name: Backspace
+  - name: Artium
     schemes:
       - backspace
 mac:
   category: public.app-category.social-networking
   minimumSystemVersion: "12.0"
   extendInfo:
-    NSAudioCaptureUsageDescription: "Backspace needs access to system audio to share sound during screen sharing."
+    NSAudioCaptureUsageDescription: "Artium needs access to system audio to share sound during screen sharing."
   # dmg only. The zip target exists for Squirrel.Mac auto-update, and these
   # builds are ad-hoc signed, which the updater classifies as `manual`
   # (src/updateCapability.ts): nothing on a Mac ever downloads the zip, so it
@@ -71,7 +71,7 @@ linux:
   # `@backspacedesktop`. Setting this key is therefore a rename, not a restoration.
   # Keep the fuse-verification paths in .github/workflows/release.yml in step with
   # it; nothing else couples them.
-  executableName: Backspace
+  executableName: Artium
   icon: build/icons/
   target:
     - AppImage

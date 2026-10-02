@@ -6,7 +6,7 @@ import { isVersionDismissed } from './updateDismissal';
  * Shared by the main process notification, the recovery surface, and the
  * renderer toast so the three cannot drift apart.
  */
-export const RELEASES_URL = 'https://github.com/TheZwiss/backspace/releases/latest';
+export const RELEASES_URL = 'https://github.com/Myosh1/artium/releases/latest';
 
 /**
  * Where the updater currently is.

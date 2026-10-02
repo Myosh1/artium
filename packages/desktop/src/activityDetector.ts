@@ -251,7 +251,7 @@ function fetchRemote(url: string, etag: string | null): Promise<{
 } | null> {
   return new Promise((resolve) => {
     const headers: Record<string, string> = {
-      'User-Agent': 'Backspace-Desktop/1.0',
+      'User-Agent': 'Artium-Desktop/1.0',
     };
     if (etag) {
       headers['If-None-Match'] = etag;
