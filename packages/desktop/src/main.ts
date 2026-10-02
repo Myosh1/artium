@@ -57,11 +57,7 @@ import {
   type PendingScreenSelection,
   type ScreenSharePickerMode,
 } from './screenSharePolicy';
-import {
-  ensureAudioIsolation,
-  releaseAudioIsolationSync,
-  sweepStaleAudioIsolation,
-} from './audioIsolation';
+import { audioIsolation } from './audioIsolation';
 import { getDesktopLanguage, isDesktopLanguage, saveStoredLanguage, translateDesktop } from './l10n';
 
 // Override Electron's package.json-derived app name so userData lives at
@@ -1267,7 +1263,7 @@ if (!gotTheLock) {
 
     // Linux: drop any screen-share audio isolation a previous run left behind
     // (crash or forced quit) before the user can start a new share.
-    void sweepStaleAudioIsolation();
+    void audioIsolation.sweepStale();
 
     // Intercept getDisplayMedia(). Two ways to answer it:
     //   1. Preselected (current web client): ScreenShareSetup listed the
@@ -1293,7 +1289,7 @@ if (!gotTheLock) {
           console.log('[Main:ScreenShare] Using preselected source:', pending.sourceId, 'audio:', pending.shareAudio);
           // Linux: make the recorded monitor Backspace-free before Chromium
           // opens the loopback. No-op elsewhere and on a non-Pulse stack.
-          if (pending.shareAudio) await ensureAudioIsolation();
+          if (pending.shareAudio) await audioIsolation.ensure();
           callback({ video: selected, ...(pending.shareAudio ? { audio: 'loopback' } : {}) });
           return;
         }
@@ -1317,7 +1313,7 @@ if (!gotTheLock) {
           // captured against the setting it thinks is in force.
           const shareAudio = lastSystemPickerShareAudio ?? false;
           console.log('[Main:ScreenShare] System picker returned one source:', sources[0]!.id, 'audio:', shareAudio);
-          if (shareAudio) await ensureAudioIsolation();
+          if (shareAudio) await audioIsolation.ensure();
           callback({ video: sources[0]!, ...(shareAudio ? { audio: 'loopback' } : {}) });
           return;
         }
@@ -1354,7 +1350,7 @@ if (!gotTheLock) {
         //     `PulseaudioLoopbackForScreenShare` feature flag we enable above.
         //     Fails on PipeWire-only systems without pulse compat — the
         //     renderer catches that and toasts the user.
-        if (shareAudio) await ensureAudioIsolation();
+        if (shareAudio) await audioIsolation.ensure();
         callback({ video: selected, ...(shareAudio ? { audio: 'loopback' } : {}) });
       } catch (err) {
         console.error('[Main:ScreenShare] Handler error:', err);
@@ -1501,6 +1497,6 @@ if (!gotTheLock) {
     isQuitting = true;
     stopActivityDetection();
     keybindManager.stop();
-    releaseAudioIsolationSync();
+    audioIsolation.releaseSync();
   });
 }

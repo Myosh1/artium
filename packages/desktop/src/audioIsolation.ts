@@ -4,7 +4,7 @@
  * Chromium's system-audio capture records the default sink's monitor, and on
  * Linux it ignores `restrictOwnAudio`. Without help, the app's own playback
  * (the channel voices) is recorded and republished as `ScreenShareAudio`, so
- * everyone hears themselves. This module makes the app inaudible to that
+ * everyone hears themselves. This manager makes the app inaudible to that
  * capture for as long as a capture is live:
  *
  *   1. load a private null sink       (artium_capture)
@@ -19,8 +19,9 @@
  * our own `module-loopback` carries an `owner_module` and is excluded. A short
  * debounce rides out the gap while System Audio is toggled off and on.
  *
- * Policy and parsing live in `audioIsolationPolicy.ts`; this file only touches
- * the system.
+ * The decisions and `pactl` parsing live in `audioIsolationPolicy.ts`; this file
+ * only touches the system. One `AudioIsolation` instance (`audioIsolation`)
+ * owns a session's state, mirroring `AudioManager` and `KeybindManager`.
  */
 
 import { execFile, execFileSync } from 'child_process';
@@ -45,21 +46,10 @@ import {
 const LOG = '[audioIsolation]';
 const PACTL_TIMEOUT_MS = 3_000;
 const RECONCILE_INTERVAL_MS = 2_000;
-
-let active = false;
-let starting: Promise<boolean> | null = null;
-let originalSink: string | null = null;
-let appOutputSink: string | null = null;
-let nullSinkIndex: number | null = null;
-let monitorSourceIndex: number | null = null;
-let ownIdentity: OwnIdentity | null = null;
-let loadedModules: number[] = [];
-let reconcileTimer: ReturnType<typeof setInterval> | null = null;
-let reconcileInFlight = false;
-let missingTicks = 0;
+const STATE_FILE = 'audio-isolation.json';
 
 // ---------------------------------------------------------------------------
-// pactl helpers
+// pactl
 // ---------------------------------------------------------------------------
 
 function runPactl(args: string[], timeoutMs = PACTL_TIMEOUT_MS): Promise<string> {
@@ -71,6 +61,7 @@ function runPactl(args: string[], timeoutMs = PACTL_TIMEOUT_MS): Promise<string>
   });
 }
 
+/** Runs `pactl`, returning null instead of throwing — a missing server is not fatal. */
 async function runPactlSafe(args: string[]): Promise<string | null> {
   try {
     return await runPactl(args);
@@ -79,6 +70,7 @@ async function runPactlSafe(args: string[]): Promise<string | null> {
   }
 }
 
+/** Synchronous variant for `before-quit`, where the event loop is going away. */
 function runPactlSync(args: string[], timeoutMs = 1_500): string | null {
   try {
     return String(execFileSync('pactl', args, { timeout: timeoutMs, maxBuffer: 4 * 1024 * 1024, encoding: 'utf8' }));
@@ -89,8 +81,8 @@ function runPactlSync(args: string[], timeoutMs = 1_500): string | null {
 
 function parseModuleId(stdout: string | null): number | null {
   if (!stdout) return null;
-  const n = Number(stdout.trim());
-  return Number.isInteger(n) ? n : null;
+  const id = Number(stdout.trim());
+  return Number.isInteger(id) ? id : null;
 }
 
 async function currentDefaultSink(): Promise<string | null> {
@@ -151,23 +143,22 @@ function collectOwnIdentity(): OwnIdentity {
 // Persisted crash-recovery state
 // ---------------------------------------------------------------------------
 
-interface IsolationStateFile {
+interface IsolationState {
   originalSink: string;
   moduleIds: number[];
 }
 
 function stateFilePath(): string | null {
   try {
-    return path.join(app.getPath('userData'), 'audio-isolation.json');
+    return path.join(app.getPath('userData'), STATE_FILE);
   } catch {
     return null;
   }
 }
 
-function writeStateFile(): void {
+function writeStateFile(state: IsolationState): void {
   const file = stateFilePath();
-  if (!file || !originalSink) return;
-  const state: IsolationStateFile = { originalSink, moduleIds: loadedModules };
+  if (!file) return;
   try {
     fs.writeFileSync(file, JSON.stringify(state), 'utf8');
   } catch (err) {
@@ -175,18 +166,18 @@ function writeStateFile(): void {
   }
 }
 
-function readStateFile(): IsolationStateFile | null {
+function readStateFile(): IsolationState | null {
   const file = stateFilePath();
   if (!file) return null;
   try {
     if (!fs.existsSync(file)) return null;
-    const parsed = JSON.parse(fs.readFileSync(file, 'utf8')) as Partial<IsolationStateFile>;
-    const originalSinkValue = typeof parsed.originalSink === 'string' ? parsed.originalSink : '';
+    const parsed = JSON.parse(fs.readFileSync(file, 'utf8')) as Partial<IsolationState>;
+    const originalSink = typeof parsed.originalSink === 'string' ? parsed.originalSink : '';
+    if (!originalSink) return null;
     const moduleIds = Array.isArray(parsed.moduleIds)
       ? parsed.moduleIds.filter((id): id is number => typeof id === 'number' && Number.isInteger(id))
       : [];
-    if (!originalSinkValue) return null;
-    return { originalSink: originalSinkValue, moduleIds };
+    return { originalSink, moduleIds };
   } catch {
     return null;
   }
@@ -203,264 +194,293 @@ function deleteStateFile(): void {
 }
 
 // ---------------------------------------------------------------------------
-// Setup / teardown
+// Manager
 // ---------------------------------------------------------------------------
 
-async function loadNullSink(): Promise<boolean> {
-  const moduleId = parseModuleId(await runPactlSafe([
-    'load-module',
-    'module-null-sink',
-    `sink_name=${AUDIO_ISOLATION_SINK_NAME}`,
-    `sink_properties=device.description=${AUDIO_ISOLATION_SINK_DESCRIPTION}`,
-  ]));
-  if (moduleId === null) {
-    console.warn(`${LOG} could not create the isolation sink`);
-    return false;
+/** Owns one isolation session: the sink it created, its modules and its timer. */
+class AudioIsolation {
+  private active = false;
+  private starting: Promise<boolean> | null = null;
+  private originalSink: string | null = null;
+  private appOutputSink: string | null = null;
+  private nullSinkIndex: number | null = null;
+  private monitorSourceIndex: number | null = null;
+  private ownIdentity: OwnIdentity | null = null;
+  private loadedModules: number[] = [];
+  private reconcileTimer: ReturnType<typeof setInterval> | null = null;
+  private reconcileInFlight = false;
+  private missingTicks = 0;
+
+  /**
+   * Start isolating the app from the system-audio capture. Called from the
+   * display-media handler before Chromium opens the loopback, so the captured
+   * monitor already excludes the app's audio. Idempotent and serialized;
+   * returns true when isolation is in force. A no-op away from Linux or a
+   * Pulse-compatible server.
+   */
+  async ensure(): Promise<boolean> {
+    if (process.platform !== 'linux') return false;
+    if (this.active) return true;
+    if (this.starting) return this.starting;
+    this.starting = this.setup();
+    try {
+      return await this.starting;
+    } finally {
+      this.starting = null;
+    }
   }
-  loadedModules.push(moduleId);
-  return true;
-}
 
-/**
- * Start isolating the app from the system-audio capture. Called from the
- * display-media handler before Chromium opens the loopback, so the captured
- * monitor already excludes the app's audio. Idempotent and serialized; returns
- * true when isolation is in force. A no-op away from Linux or a
- * Pulse-compatible server.
- */
-export async function ensureAudioIsolation(): Promise<boolean> {
-  if (process.platform !== 'linux') return false;
-  if (active) return true;
-  if (starting) return starting;
-  starting = setup();
-  try {
-    return await starting;
-  } finally {
-    starting = null;
-  }
-}
+  private async setup(depth = 0): Promise<boolean> {
+    if (process.platform !== 'linux') return false;
 
-async function setup(depth = 0): Promise<boolean> {
-  if (process.platform !== 'linux') return false;
+    const info = parsePulseInfo((await runPactlSafe(['-f', 'json', 'info'])) ?? '');
+    if (!info?.defaultSinkName) {
+      console.warn(`${LOG} no PulseAudio-compatible server; system audio cannot be isolated`);
+      return false;
+    }
+    if (info.defaultSinkName === AUDIO_ISOLATION_SINK_NAME) {
+      // A previous run leaked the sink (crash). Recover once, then isolate.
+      if (depth > 0) return false;
+      await this.sweepStale();
+      return this.setup(depth + 1);
+    }
 
-  const info = parsePulseInfo((await runPactlSafe(['-f', 'json', 'info'])) ?? '');
-  if (!info || !info.defaultSinkName) {
-    console.warn(`${LOG} no PulseAudio-compatible server; system audio cannot be isolated`);
-    return false;
-  }
-  if (info.defaultSinkName === AUDIO_ISOLATION_SINK_NAME) {
-    // A previous run leaked the sink (crash). Recover once, then isolate.
-    if (depth > 0) return false;
-    await sweepStaleAudioIsolation();
-    return setup(depth + 1);
-  }
-  const physicalSink = info.defaultSinkName;
-
-  const identity = collectOwnIdentity();
-  ownIdentity = identity;
-  const sinksBefore = parseEntityList((await runPactlSafe(['-f', 'json', 'list', 'sinks'])) ?? '');
-  const inputsBefore = parseSinkInputs((await runPactlSafe(['-f', 'json', 'list', 'sink-inputs'])) ?? '');
-  const resolvedAppSink = resolveAppOutputSink(inputsBefore, sinksBefore, identity, physicalSink);
-
-  originalSink = physicalSink;
-  appOutputSink = resolvedAppSink;
-
-  try {
-    if (!(await loadNullSink())) throw new Error('null sink');
-
+    const physicalSink = info.defaultSinkName;
+    const identity = collectOwnIdentity();
+    this.ownIdentity = identity;
     const sinks = parseEntityList((await runPactlSafe(['-f', 'json', 'list', 'sinks'])) ?? '');
-    nullSinkIndex = sinks.find((sink) => sink.name === AUDIO_ISOLATION_SINK_NAME)?.index ?? null;
+    const inputs = parseSinkInputs((await runPactlSafe(['-f', 'json', 'list', 'sink-inputs'])) ?? '');
+    this.originalSink = physicalSink;
+    this.appOutputSink = resolveAppOutputSink(inputs, sinks, identity, physicalSink);
 
-    const sources = parseEntityList((await runPactlSafe(['-f', 'json', 'list', 'sources'])) ?? '');
-    monitorSourceIndex = sources.find((source) => source.name === `${AUDIO_ISOLATION_SINK_NAME}.monitor`)?.index ?? null;
-    if (nullSinkIndex === null || monitorSourceIndex === null) throw new Error('sink introspection');
+    try {
+      if (!(await this.createSink())) throw new Error('could not create the isolation sink');
+      [this.nullSinkIndex, this.monitorSourceIndex] = await this.resolveSinkIndexes();
+      if (this.nullSinkIndex === null || this.monitorSourceIndex === null) {
+        throw new Error('could not resolve the isolation sink indexes');
+      }
+      if (!(await this.createLoopback(physicalSink))) throw new Error('could not create the loopback');
+      await this.switchDefaultSink();
+    } catch (err) {
+      console.warn(`${LOG} setup failed, rolling back:`, err);
+      await this.unloadModules();
+      this.reset();
+      return false;
+    }
 
-    const loopbackId = parseModuleId(await runPactlSafe([
+    this.active = true;
+    this.missingTicks = 0;
+    writeStateFile({ originalSink: physicalSink, moduleIds: this.loadedModules });
+    this.startReconciliation();
+    void this.reconcile();
+    console.log(`${LOG} isolated system audio (physical sink: ${physicalSink})`);
+    return true;
+  }
+
+  private async createSink(): Promise<boolean> {
+    const moduleId = parseModuleId(await runPactlSafe([
+      'load-module',
+      'module-null-sink',
+      `sink_name=${AUDIO_ISOLATION_SINK_NAME}`,
+      `sink_properties=device.description=${AUDIO_ISOLATION_SINK_DESCRIPTION}`,
+    ]));
+    if (moduleId === null) return false;
+    this.loadedModules.push(moduleId);
+    return true;
+  }
+
+  private async createLoopback(physicalSink: string): Promise<boolean> {
+    const moduleId = parseModuleId(await runPactlSafe([
       'load-module',
       'module-loopback',
       `source=${AUDIO_ISOLATION_SINK_NAME}.monitor`,
       `sink=${physicalSink}`,
     ]));
-    if (loopbackId === null) throw new Error('loopback');
-    loadedModules.push(loopbackId);
+    if (moduleId === null) return false;
+    this.loadedModules.push(moduleId);
+    return true;
+  }
 
+  /** The created sink and its monitor source, once the server reports them. */
+  private async resolveSinkIndexes(): Promise<[number | null, number | null]> {
+    const sinks = parseEntityList((await runPactlSafe(['-f', 'json', 'list', 'sinks'])) ?? '');
+    const sources = parseEntityList((await runPactlSafe(['-f', 'json', 'list', 'sources'])) ?? '');
+    return [
+      sinks.find((sink) => sink.name === AUDIO_ISOLATION_SINK_NAME)?.index ?? null,
+      sources.find((source) => source.name === `${AUDIO_ISOLATION_SINK_NAME}.monitor`)?.index ?? null,
+    ];
+  }
+
+  private async switchDefaultSink(): Promise<void> {
     if (await runPactlSafe(['set-default-sink', AUDIO_ISOLATION_SINK_NAME]) === null) {
-      throw new Error('set-default-sink');
+      throw new Error('set-default-sink failed');
     }
     if (!(await waitForDefaultSink(AUDIO_ISOLATION_SINK_NAME))) {
-      throw new Error('default sink did not switch');
-    }
-  } catch (err) {
-    console.warn(`${LOG} setup failed, rolling back:`, err);
-    await unloadAllModules();
-    originalSink = null;
-    appOutputSink = null;
-    nullSinkIndex = null;
-    monitorSourceIndex = null;
-    ownIdentity = null;
-    return false;
-  }
-
-  active = true;
-  missingTicks = 0;
-  writeStateFile();
-  startReconciliation();
-  void reconcile();
-  console.log(`${LOG} isolated system audio (physical sink: ${physicalSink})`);
-  return true;
-}
-
-async function unloadAllModules(): Promise<void> {
-  const ids = [...loadedModules].reverse();
-  loadedModules = [];
-  for (const id of ids) {
-    await runPactlSafe(['unload-module', String(id)]);
-  }
-}
-
-/** Restore the physical sink, unload the modules, forget the state. */
-export async function releaseAudioIsolation(): Promise<void> {
-  if (starting) {
-    try {
-      await starting;
-    } catch {
-      // Setup already rolled itself back.
+      throw new Error('the default sink did not switch');
     }
   }
-  if (!active) return;
-  active = false;
-  stopReconciliation();
 
-  const physical = originalSink;
-  // Pull every stream off the captured sink before it disappears, so nothing
-  // is left pointing at a sink that is about to be unloaded.
-  if (nullSinkIndex !== null && physical) {
+  /** Restore the physical sink, unload the modules, forget the session. */
+  async release(): Promise<void> {
+    if (this.starting) {
+      try {
+        await this.starting;
+      } catch {
+        // Setup already rolled itself back.
+      }
+    }
+    if (!this.active) return;
+    this.active = false;
+    this.stopReconciliation();
+
+    await this.moveStreamsOffCapturedSink();
+    await this.restoreDefaultSink();
+    await this.unloadModules();
+    deleteStateFile();
+    this.reset();
+    console.log(`${LOG} released system-audio isolation`);
+  }
+
+  /** Synchronous best effort for `before-quit`, where the process is going away. */
+  releaseSync(): void {
+    if (!this.active) return;
+    this.active = false;
+    this.stopReconciliation();
+
+    if (this.originalSink) {
+      const info = parsePulseInfo(runPactlSync(['-f', 'json', 'info']) ?? '');
+      if (info?.defaultSinkName === AUDIO_ISOLATION_SINK_NAME) {
+        runPactlSync(['set-default-sink', this.originalSink]);
+      }
+    }
+    for (const id of [...this.loadedModules].reverse()) {
+      runPactlSync(['unload-module', String(id)]);
+    }
+    this.loadedModules = [];
+    deleteStateFile();
+    this.reset();
+  }
+
+  /**
+   * Pull every stream off the captured sink before it disappears, so nothing
+   * is left pointing at a sink that is about to be unloaded.
+   */
+  private async moveStreamsOffCapturedSink(): Promise<void> {
+    if (this.nullSinkIndex === null || !this.originalSink) return;
     const inputs = parseSinkInputs((await runPactlSafe(['-f', 'json', 'list', 'sink-inputs'])) ?? '');
     for (const input of inputs) {
-      if (input.ownerModule === null && input.sink === nullSinkIndex) {
-        await runPactlSafe(['move-sink-input', String(input.index), physical]);
+      if (input.ownerModule === null && input.sink === this.nullSinkIndex) {
+        await runPactlSafe(['move-sink-input', String(input.index), this.originalSink]);
       }
     }
   }
-  if (physical) {
+
+  private async restoreDefaultSink(): Promise<void> {
+    if (!this.originalSink) return;
     const info = parsePulseInfo((await runPactlSafe(['-f', 'json', 'info'])) ?? '');
     if (info?.defaultSinkName === AUDIO_ISOLATION_SINK_NAME) {
+      await runPactlSafe(['set-default-sink', this.originalSink]);
+    }
+  }
+
+  private async unloadModules(): Promise<void> {
+    const ids = [...this.loadedModules].reverse();
+    this.loadedModules = [];
+    for (const id of ids) {
+      await runPactlSafe(['unload-module', String(id)]);
+    }
+  }
+
+  private reset(): void {
+    this.originalSink = null;
+    this.appOutputSink = null;
+    this.nullSinkIndex = null;
+    this.monitorSourceIndex = null;
+    this.ownIdentity = null;
+    this.missingTicks = 0;
+  }
+
+  /** Remove anything a previous (crashed) run left behind. */
+  async sweepStale(): Promise<void> {
+    if (process.platform !== 'linux') return;
+
+    const saved = readStateFile();
+    const sinks = parseEntityList((await runPactlSafe(['-f', 'json', 'list', 'sinks'])) ?? '');
+    const physical = saved?.originalSink && sinks.some((sink) => sink.name === saved.originalSink)
+      ? saved.originalSink
+      : sinks.find((sink) => sink.name !== AUDIO_ISOLATION_SINK_NAME)?.name ?? null;
+
+    const info = parsePulseInfo((await runPactlSafe(['-f', 'json', 'info'])) ?? '');
+    if (info?.defaultSinkName === AUDIO_ISOLATION_SINK_NAME && physical) {
       await runPactlSafe(['set-default-sink', physical]);
     }
+
+    const ids = new Set<number>(saved?.moduleIds ?? []);
+    const moduleList = await runPactlSafe(['list', 'short', 'modules']);
+    if (moduleList) {
+      for (const module of parseShortModules(moduleList)) {
+        if (module.args.includes(AUDIO_ISOLATION_SINK_NAME)) ids.add(module.id);
+      }
+    }
+    for (const id of ids) {
+      await runPactlSafe(['unload-module', String(id)]);
+    }
+    deleteStateFile();
+    if (ids.size > 0) console.log(`${LOG} swept ${ids.size} stale isolation module(s)`);
   }
-  await unloadAllModules();
-  deleteStateFile();
 
-  originalSink = null;
-  appOutputSink = null;
-  nullSinkIndex = null;
-  monitorSourceIndex = null;
-  ownIdentity = null;
-  missingTicks = 0;
-  console.log(`${LOG} released system-audio isolation`);
-}
+  private startReconciliation(): void {
+    this.stopReconciliation();
+    this.reconcileTimer = setInterval(() => {
+      void this.reconcile();
+    }, RECONCILE_INTERVAL_MS);
+    // Never keep the event loop (and the app) alive for a timer.
+    this.reconcileTimer.unref?.();
+  }
 
-/** Synchronous best effort for `before-quit`, where the process is going away. */
-export function releaseAudioIsolationSync(): void {
-  if (!active) return;
-  active = false;
-  stopReconciliation();
-  const physical = originalSink;
-  if (physical) {
-    const info = parsePulseInfo(runPactlSync(['-f', 'json', 'info']) ?? '');
-    if (info?.defaultSinkName === AUDIO_ISOLATION_SINK_NAME) {
-      runPactlSync(['set-default-sink', physical]);
+  private stopReconciliation(): void {
+    if (this.reconcileTimer) {
+      clearInterval(this.reconcileTimer);
+      this.reconcileTimer = null;
     }
   }
-  for (const id of [...loadedModules].reverse()) {
-    runPactlSync(['unload-module', String(id)]);
-  }
-  loadedModules = [];
-  deleteStateFile();
-}
 
-/** Remove anything a previous (crashed) run left behind. */
-export async function sweepStaleAudioIsolation(): Promise<void> {
-  if (process.platform !== 'linux') return;
+  private async reconcile(): Promise<void> {
+    if (!this.active || this.reconcileInFlight) return;
+    this.reconcileInFlight = true;
+    try {
+      // Is the capture still open? A few empty ticks mean the share ended.
+      const outputs = parseSourceOutputs((await runPactlSafe(['-f', 'json', 'list', 'source-outputs'])) ?? '');
+      const recordings = this.monitorSourceIndex === null
+        ? 0
+        : countApplicationRecordings(outputs, this.monitorSourceIndex, new Set(this.loadedModules));
+      const decision = reconcileRelease(this.missingTicks, recordings, RELEASE_AFTER_MISSING_TICKS);
+      this.missingTicks = decision.missingTicks;
+      if (decision.release) {
+        await this.release();
+        return;
+      }
 
-  const saved = readStateFile();
-  const sinks = parseEntityList((await runPactlSafe(['-f', 'json', 'list', 'sinks'])) ?? '');
-  const physical = saved?.originalSink && sinks.some((sink) => sink.name === saved.originalSink)
-    ? saved.originalSink
-    : sinks.find((sink) => sink.name !== AUDIO_ISOLATION_SINK_NAME)?.name ?? null;
-
-  const info = parsePulseInfo((await runPactlSafe(['-f', 'json', 'info'])) ?? '');
-  if (info?.defaultSinkName === AUDIO_ISOLATION_SINK_NAME && physical) {
-    await runPactlSafe(['set-default-sink', physical]);
-  }
-
-  const ids = new Set<number>(saved?.moduleIds ?? []);
-  const moduleList = await runPactlSafe(['list', 'short', 'modules']);
-  if (moduleList) {
-    for (const module of parseShortModules(moduleList)) {
-      if (module.args.includes(AUDIO_ISOLATION_SINK_NAME)) ids.add(module.id);
+      // Keep other applications on the captured sink and this app off it. The
+      // sink and identity are cached for the session, so each tick costs two
+      // `pactl` calls and no process scan.
+      if (this.nullSinkIndex === null || !this.appOutputSink || !this.ownIdentity) return;
+      const inputs = parseSinkInputs((await runPactlSafe(['-f', 'json', 'list', 'sink-inputs'])) ?? '');
+      const moves = planSinkMoves(inputs, {
+        nullSinkIndex: this.nullSinkIndex,
+        appOutputSink: this.appOutputSink,
+        identity: this.ownIdentity,
+      });
+      for (const move of moves) {
+        await runPactlSafe(['move-sink-input', String(move.index), move.targetSink]);
+      }
+    } catch (err) {
+      console.warn(`${LOG} reconciliation failed:`, err);
+    } finally {
+      this.reconcileInFlight = false;
     }
   }
-  for (const id of ids) {
-    await runPactlSafe(['unload-module', String(id)]);
-  }
-  deleteStateFile();
-  if (ids.size > 0) console.log(`${LOG} swept ${ids.size} stale isolation module(s)`);
 }
 
-// ---------------------------------------------------------------------------
-// Reconciliation
-// ---------------------------------------------------------------------------
-
-function startReconciliation(): void {
-  stopReconciliation();
-  reconcileTimer = setInterval(() => {
-    void reconcile();
-  }, RECONCILE_INTERVAL_MS);
-  // Never keep the event loop (and the app) alive for a timer.
-  reconcileTimer.unref?.();
-}
-
-function stopReconciliation(): void {
-  if (reconcileTimer) {
-    clearInterval(reconcileTimer);
-    reconcileTimer = null;
-  }
-}
-
-async function reconcile(): Promise<void> {
-  if (!active || reconcileInFlight) return;
-  reconcileInFlight = true;
-  try {
-    const excluded = new Set(loadedModules);
-    const outputs = parseSourceOutputs((await runPactlSafe(['-f', 'json', 'list', 'source-outputs'])) ?? '');
-    const recordings = monitorSourceIndex === null
-      ? 0
-      : countApplicationRecordings(outputs, monitorSourceIndex, excluded);
-
-    const decision = reconcileRelease(missingTicks, recordings, RELEASE_AFTER_MISSING_TICKS);
-    missingTicks = decision.missingTicks;
-    if (decision.release) {
-      await releaseAudioIsolation();
-      return;
-    }
-
-    // Keep other applications on the captured sink and this app off it. The
-    // sink and identity are cached for the session, so each tick costs two
-    // `pactl` calls and no process-tree scan.
-    if (nullSinkIndex === null || !appOutputSink || !ownIdentity) return;
-    const inputs = parseSinkInputs((await runPactlSafe(['-f', 'json', 'list', 'sink-inputs'])) ?? '');
-    const moves = planSinkMoves(inputs, {
-      nullSinkIndex,
-      appOutputSink,
-      identity: ownIdentity,
-    });
-    for (const move of moves) {
-      await runPactlSafe(['move-sink-input', String(move.index), move.targetSink]);
-    }
-  } catch (err) {
-    console.warn(`${LOG} reconciliation failed:`, err);
-  } finally {
-    reconcileInFlight = false;
-  }
-}
+/** The app's single isolation manager. */
+export const audioIsolation = new AudioIsolation();
