@@ -166,7 +166,7 @@ describe('buildTrayMenuTemplate', () => {
   it('includes Show/Hide/Change Instance/Quit base items', () => {
     const items = buildTrayMenuTemplate(defaultState());
     const labels = items.map((i) => i.label);
-    expect(labels).toContain('Show Backspace');
+    expect(labels).toContain('Show Artium');
     expect(labels).toContain('Hide');
     expect(labels).toContain('Change Instance');
     expect(labels).toContain('Quit');
@@ -368,7 +368,7 @@ describe('manual-download update state in the menus', () => {
     expect(ids).toContain('download-update');
     expect(ids).not.toContain('restart-to-install');
     expect(items.find((i) => i.id === 'download-update')!.label)
-      .toBe('Download Backspace 1.0.4…');
+      .toBe('Download Artium 1.0.4…');
   });
 
   it('falls back to an unversioned label when no version is known', () => {
